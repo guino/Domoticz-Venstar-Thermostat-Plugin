@@ -3,7 +3,7 @@
 # Author: getSurreal
 #
 """
-<plugin key="Venstar" name="Venstar Thermostat Local API" author="getSurreal" version="1.0" wikilink="http://www.domoticz.com/wiki/plugins/venstar.html" externallink="http://venstar.com/">
+<plugin key="Venstar" name="Venstar Thermostat Local API" author="getSurreal and Wagner Oliveira" version="1.0" wikilink="http://www.domoticz.com/wiki/plugins/venstar.html" externallink="http://venstar.com/">
     <params>
         <param field="Address"  label="Address"  width="200px" required="true"  default="192.168.1.x"/>
         <param field="Port"     label="Port"     width="200px" required="true" default="80"/>
@@ -54,10 +54,10 @@ class BasePlugin:
         if (Status == 0):
             self.isConnected = True
             if (1 not in Devices):
-                Options = "LevelActions:"+stringToBase64("||||")+";LevelNames:"+stringToBase64("Off|Heat|Cool|Auto")+";LevelOffHidden:ZmFsc2U=;SelectorStyle:MA=="
+                Options = { "LevelActions": "||||", "LevelNames": "Off|Heat|Cool|Auto", "LevelOffHidden": "false", "SelectorStyle": "0" }
                 Domoticz.Device(Name="Mode",  Unit=1, TypeName="Selector Switch", Switchtype=18, Image=16, Options=Options).Create()
             if (2 not in Devices):
-                Options = "LevelActions:"+stringToBase64("||||")+";LevelNames:"+stringToBase64("Auto|On")+";LevelOffHidden:ZmFsc2U=;SelectorStyle:MA=="
+                Options = { "LevelActions": "||||", "LevelNames": "Auto|On", "LevelOffHidden": "false", "SelectorStyle": "0" }
                 Domoticz.Device(Name="Fan Mode",  Unit=2, TypeName="Selector Switch", Switchtype=18, Image=7, Options=Options).Create()
             if (3 not in Devices): Domoticz.Device(Name="Heat Setpoint", Unit=3, Type=242, Subtype=1).Create()
             if (4 not in Devices): Domoticz.Device(Name="Cool Setpoint", Unit=4, Type=242, Subtype=1).Create()
@@ -72,9 +72,9 @@ class BasePlugin:
             Domoticz.Log("Failed to connect ("+str(Status)+") to: "+Parameters["Address"])
             Domoticz.Debug("Failed to connect ("+str(Status)+") to: "+Parameters["Address"]+" with error: "+Description)
 
-    def onMessage(self, Connection, Data, Status, Extra):
+    def onMessage(self, Connection, Data):
         Domoticz.Debug("onMessage called")
-        jsonStr = Data.decode("utf-8", "ignore")
+        jsonStr = Data["Data"].decode("utf-8", "ignore")
 
         if "success" in jsonStr:
             return
@@ -94,15 +94,15 @@ class BasePlugin:
             UpdateDevice(3,0,str(data['heattemp']))
             UpdateDevice(4,0,str(data['cooltemp']))
             UpdateDevice(6,0,str(data['spacetemp']))
-            UpdateDevice(7,0,str(data['spacetemp'])+";"+str(data['hum_setpoint'])+";1")
-#            UpdateDevice(5,0,str(data['hum_setpoint']))
-        UpdateDevice(8,data['hum_setpoint'],"0")
+            UpdateDevice(7,0,str(data['spacetemp'])+";"+str(data['hum'])+";1")
+#            UpdateDevice(5,0,str(data['dehum_setpoint']))
+        UpdateDevice(8,data['hum'],"0")
         UpdateDevice(9,data['schedule'],"0")
         UpdateDevice(10,data['away'],"0")
 
     def onCommand(self, Unit, Command, Level, Hue):
         Domoticz.Debug("onCommand called for Unit " + str(Unit) + ": Parameter '" + str(Command) + "', Level: " + str(int(Level)))
-        Domoticz.Debug("mode:"+str(int(Devices[1].sValue))+", fan:"+str(Devices[2].nValue)+", heattemp:"+str(int(float(Devices[3].sValue)*9/5+32))+", cooltemp:"+str(int(float(Devices[4].sValue)*9/5+32)))
+        Domoticz.Debug("mode:"+str(int(Devices[1].sValue))+", fan:"+str(Devices[2].nValue)+", heattemp:"+str(float(Devices[3].sValue))+", cooltemp:"+str(float(Devices[4].sValue)) )
 
         if (Unit == 1): # mode
             mode_val = int(Level/10)
@@ -117,59 +117,58 @@ class BasePlugin:
             fan_val = int(int(Devices[2].sValue)/10)
 
         if (Unit == 3): # heat temp
-            heat_val = int(Level)
+            heat_val = float(Level)
         else:
-            heat_val = int(float(Devices[3].sValue)*9/5+32)
+            heat_val = float(Devices[3].sValue)
 
         if (Unit == 4): # cool temp
-            cool_val = int(Level)
+            cool_val = float(Level)
         else:
-            cool_val = int(float(Devices[4].sValue)*9/5+32)
+            cool_val = float(Devices[4].sValue)
 
         if (Unit <= 4):
-
-            params = urllib.parse.urlencode({
-                'mode': mode_val,
-                'fan': fan_val,
-                'heattemp': heat_val,
-                'cooltemp': cool_val
-            }).encode("utf-8")
+            params = "mode="+str(mode_val)+"&fan="+str(fan_val)+"&heattemp="+str(heat_val)+"&cooltemp="+str(cool_val)
             headers = { 'Content-Type': 'application/x-www-form-urlencoded', \
                         'Content-Length' : "%d"%(len(params)) }
-            self.VenstarConn.Send(params, "POST", "/control", headers)            
+            sendData = { 'Verb' : 'POST',
+                         'URL'  : '/control',
+                         'Headers' : headers,
+                         'Data': params }
+            self.VenstarConn.Send(sendData)
 
         if (Unit == 9): # schedule
             if (Command == "On"):
-                params = urllib.parse.urlencode({
-                    'schedule': 1
-                }).encode("utf-8")
+                params = "schedule=1"
                 UpdateDevice(Unit,1,"0")
 
             elif (Command == "Off"):
-                params = urllib.parse.urlencode({
-                    'schedule': 0
-                }).encode("utf-8")
+                params = "schedule=0"
                 UpdateDevice(Unit,0,"0")
+
             headers = { 'Content-Type': 'application/x-www-form-urlencoded', \
                         'Content-Length' : "%d"%(len(params)) }
-            self.VenstarConn.Send(params, "POST", "/settings", headers)
+            sendData = { 'Verb' : 'POST',
+                         'URL'  : '/settings',
+                         'Headers' : headers,
+                         'Data': params }
+            self.VenstarConn.Send(sendData)
 
         if (Unit == 10): # away
             if (Command == "On"):
-                params = urllib.parse.urlencode({
-                    'away': 1
-                }).encode("utf-8")
+                params = "away=1"
                 UpdateDevice(Unit,1,"0")
 
             elif (Command == "Off"):
-                params = urllib.parse.urlencode({
-                    'away': 0
-                }).encode("utf-8")
+                params = "away=0"
                 UpdateDevice(Unit,0,"0")
+
             headers = { 'Content-Type': 'application/x-www-form-urlencoded', \
                         'Content-Length' : "%d"%(len(params)) }
-            self.VenstarConn.Send(params, "POST", "/settings", headers)
-
+            sendData = { 'Verb' : 'POST',
+                         'URL'  : '/settings',
+                         'Headers' : headers,
+                         'Data': params }
+            self.VenstarConn.Send(sendData)
 
     def onNotification(self, Name, Subject, Text, Status, Priority, Sound, ImageFile):
         Domoticz.Debug("Notification: " + Name + "," + Subject + "," + Text + "," + Status + "," + str(Priority) + "," + Sound + "," + ImageFile)
@@ -182,14 +181,16 @@ class BasePlugin:
         Domoticz.Debug("onHeartbeat called")
         if (self.VenstarConn.Connected() == True):
             url = '/query/info'
-            data = ''
-            headers = { 'Content-Type': 'text/xml; charset=utf-8', \
-                        'Connection': 'keep-alive', \
-                        'Accept': 'Content-Type: text/html; charset=UTF-8', \
-                        'Host': Parameters["Address"]+":"+Parameters["Port"], \
-                        'User-Agent':'Domoticz/1.0', \
-                        'Content-Length' : "%d"%(len(data)) }
-            self.VenstarConn.Send(data, "GET", url)
+            sendData = { 'Verb' : 'GET',
+                         'URL'  : url,
+                         'Headers' : { 'Content-Type': 'text/xml; charset=utf-8', \
+                                       'Connection': 'keep-alive', \
+                                       'Accept': 'Content-Type: text/html; charset=UTF-8', \
+                                       'Host': Parameters["Address"]+":"+Parameters["Port"], \
+                                       'User-Agent':'Domoticz/1.0'
+                                    },
+                        }
+            self.VenstarConn.Send(sendData)
         else:
             Domoticz.Connect()
 
@@ -208,9 +209,9 @@ def onConnect(Connection, Status, Description):
     global _plugin
     _plugin.onConnect(Connection, Status, Description)
 
-def onMessage(Connection, Data, Status, Extra):
+def onMessage(Connection, Data):
     global _plugin
-    _plugin.onMessage(Connection, Data, Status, Extra)
+    _plugin.onMessage(Connection, Data)
 
 def onCommand(Unit, Command, Level, Hue):
     global _plugin
